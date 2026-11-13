@@ -253,6 +253,7 @@ public class MainActivity extends Activity {
     }
 
     private void updateUi() {
+        MitiWidgetProvider.updateAllWidgets(this);
         final boolean useNepalTime = DateReceiver.isUseNepalTime(this);
         BsCalendar.BsDateResult today = BsCalendar.getToday(useNepalTime);
         boolean enabled = DateReceiver.isWidgetEnabled(this);

@@ -15,8 +15,10 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Typeface;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 
 import java.util.Calendar;
@@ -25,7 +27,8 @@ import java.util.TimeZone;
 public class DateReceiver extends BroadcastReceiver {
 
     public static final String ACTION_UPDATE_DATE = "np.com.siriri.mitibar.ACTION_UPDATE_DATE";
-    private static final String CHANNEL_ID = "bs_status_channel";
+    private static final String LEGACY_CHANNEL_ID = "bs_status_channel";
+    private static final String CHANNEL_ID = "bs_status_channel_v2";
     private static final int NOTIFICATION_ID = 8315;
     private static final int REQ_ALARM = 0;
     private static final int REQ_DELETE = 1;
@@ -49,6 +52,7 @@ public class DateReceiver extends BroadcastReceiver {
         } else {
             cancelAll(context);
         }
+        MitiWidgetProvider.updateAllWidgets(context);
     }
 
     public static boolean isUseNepalTime(Context context) {
@@ -63,6 +67,7 @@ public class DateReceiver extends BroadcastReceiver {
             showNotification(context);
             scheduleNextMidnightAlarm(context);
         }
+        MitiWidgetProvider.updateAllWidgets(context);
     }
 
     public static boolean isNotificationPermitted(Context context) {
@@ -80,6 +85,7 @@ public class DateReceiver extends BroadcastReceiver {
         if (intent == null || !isExpectedAction(intent.getAction())) {
             return;
         }
+        MitiWidgetProvider.updateAllWidgets(context);
         if (!isWidgetEnabled(context)) {
             return;
         }
@@ -104,24 +110,9 @@ public class DateReceiver extends BroadcastReceiver {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
 
-        NotificationChannel channel = new NotificationChannel(
-                CHANNEL_ID, "Nepali Date Status", NotificationManager.IMPORTANCE_LOW
-        );
-        channel.setShowBadge(false);
-        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-        nm.createNotificationChannel(channel);
+        ensureChannel(nm);
 
         BsCalendar.BsDateResult date = BsCalendar.getToday(isUseNepalTime(context));
-        int smallIconRes = 0;
-        if (date.inRange && date.dayOfMonth >= 1 && date.dayOfMonth <= 32) {
-            smallIconRes = context.getResources().getIdentifier(
-                    "ic_day_" + date.dayOfMonth, "drawable", context.getPackageName()
-            );
-        }
-        if (smallIconRes == 0) {
-            smallIconRes = context.getApplicationInfo().icon;
-        }
-
         Bitmap largeBadge = renderDateBadge(context, date.monthShort, date.dayNum);
 
         Intent openIntent = new Intent(context, MainActivity.class);
@@ -138,19 +129,88 @@ public class DateReceiver extends BroadcastReceiver {
                 PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
 
-        Notification notification = new Notification.Builder(context, CHANNEL_ID)
-                .setSmallIcon(smallIconRes)
+        Notification.Builder builder = new Notification.Builder(context, CHANNEL_ID)
                 .setLargeIcon(largeBadge)
                 .setColor(0xFFD11339)
                 .setContentTitle(date.fullLockscreen)
                 .setContentText("विक्रम संवत • पात्रो")
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setShowWhen(false)
+                .setCategory(Notification.CATEGORY_EVENT)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
                 .setContentIntent(contentPending)
-                .setDeleteIntent(deletePending)
-                .build();
+                .setDeleteIntent(deletePending);
 
-        nm.notify(NOTIFICATION_ID, notification);
+        applyStatusBarIcon(context, builder, date);
+        nm.notify(NOTIFICATION_ID, builder.build());
+    }
+
+    private static void ensureChannel(NotificationManager nm) {
+        if (nm.getNotificationChannel(LEGACY_CHANNEL_ID) != null) {
+            nm.deleteNotificationChannel(LEGACY_CHANNEL_ID);
+        }
+        NotificationChannel channel = new NotificationChannel(
+                CHANNEL_ID, "Nepali Date Status", NotificationManager.IMPORTANCE_DEFAULT
+        );
+        channel.setDescription("Displays today's Nepali date in the status bar and lockscreen silently.");
+        channel.setSound(null, null);
+        channel.enableVibration(false);
+        channel.enableLights(false);
+        channel.setShowBadge(false);
+        channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        nm.createNotificationChannel(channel);
+    }
+
+    private static void applyStatusBarIcon(
+            Context context, Notification.Builder builder, BsCalendar.BsDateResult date) {
+        if (date.inRange && date.monthShort != null && date.dayNum != null) {
+            Bitmap statusBitmap = renderStatusBarDateBitmap(date.monthShort, date.dayNum);
+            builder.setSmallIcon(Icon.createWithBitmap(statusBitmap));
+            return;
+        }
+        int fallbackRes = 0;
+        if (date.inRange && date.dayOfMonth >= 1 && date.dayOfMonth <= 32) {
+            fallbackRes = context.getResources().getIdentifier(
+                    "ic_day_" + date.dayOfMonth, "drawable", context.getPackageName()
+            );
+        }
+        if (fallbackRes == 0) {
+            fallbackRes = context.getApplicationInfo().icon;
+        }
+        builder.setSmallIcon(fallbackRes);
+    }
+
+    private static Bitmap renderStatusBarDateBitmap(String monthShort, String dayNum) {
+        final int size = 96;
+        Bitmap bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+
+        Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        paint.setColor(Color.WHITE);
+        paint.setTextAlign(Paint.Align.CENTER);
+        paint.setTypeface(Typeface.DEFAULT_BOLD);
+
+        drawTextCenteredInVerticalBand(canvas, paint, monthShort, size, 2f, 40f, 34f, 90f);
+        drawTextCenteredInVerticalBand(canvas, paint, dayNum, size, 42f, 94f, 54f, 88f);
+        return bitmap;
+    }
+
+    private static void drawTextCenteredInVerticalBand(
+            Canvas canvas, Paint paint, String text, int canvasWidth,
+            float bandTop, float bandBottom, float baseSize, float maxWidth) {
+        float textSize = baseSize;
+        paint.setTextSize(textSize);
+        float measured = paint.measureText(text);
+        if (measured > maxWidth && measured > 0f) {
+            textSize *= (maxWidth / measured);
+            paint.setTextSize(textSize);
+        }
+        Rect bounds = new Rect();
+        paint.getTextBounds(text, 0, text.length(), bounds);
+        float bandCenterY = (bandTop + bandBottom) * 0.5f;
+        float baselineY = bandCenterY - (bounds.top + bounds.bottom) * 0.5f;
+        canvas.drawText(text, canvasWidth * 0.5f, baselineY, paint);
     }
 
     private static Bitmap renderDateBadge(Context context, String monthShort, String dayNum) {
@@ -198,7 +258,7 @@ public class DateReceiver extends BroadcastReceiver {
     }
 
     public static void scheduleNextMidnightAlarm(Context context) {
-        if (!isWidgetEnabled(context)) return;
+        if (!isWidgetEnabled(context) && !MitiWidgetProvider.hasActiveWidgets(context)) return;
 
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (am == null) return;
@@ -230,6 +290,9 @@ public class DateReceiver extends BroadcastReceiver {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm != null) {
             nm.cancel(NOTIFICATION_ID);
+        }
+        if (MitiWidgetProvider.hasActiveWidgets(context)) {
+            return;
         }
         AlarmManager am = (AlarmManager) context.getSystemService(Context.ALARM_SERVICE);
         if (am != null) {
