@@ -136,6 +136,8 @@ public class DateReceiver extends BroadcastReceiver {
                 .setContentText("विक्रम संवत • पात्रो")
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
+                .setLocalOnly(true)
+                .setSortKey("0000")
                 .setShowWhen(false)
                 .setCategory(Notification.CATEGORY_EVENT)
                 .setVisibility(Notification.VISIBILITY_PUBLIC)
